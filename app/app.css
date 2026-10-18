@@ -1,0 +1,35 @@
+/* Light and dark tokens, same pattern as Speak to Prompt and Shower Thoughts. */
+:root {
+  --bg: #f3f1f7;
+  --surface: #ffffff;
+  --ink: #1d1a26;
+  --muted: #5f5a6e;
+  --line: #dcd7e6;
+  --accent: #6a4bc4;
+  --accent-ink: #ffffff;
+  --body: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #14121b; --surface: #1d1a27; --ink: #ebe8f2; --muted: #a39db3;
+    --line: #322d40; --accent: #a48ef0; --accent-ink: #14121b; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #14121b; --surface: #1d1a27; --ink: #ebe8f2; --muted: #a39db3;
+  --line: #322d40; --accent: #a48ef0; --accent-ink: #14121b; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+/* DEV-1: nothing can override [hidden]. */
+[hidden] { display: none !important; }
+html, body { margin: 0; }
+body {
+  background: var(--bg); color: var(--ink); font-family: var(--body);
+  font-size: 17px; line-height: 1.55; -webkit-text-size-adjust: 100%;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: max(28px, env(safe-area-inset-top, 0px)) 48px;
+}
+.wrap { max-width: 640px; margin: 0 auto; }
+h1 { margin: 0; font-size: 30px; line-height: 1.15; letter-spacing: -0.01em; }
+.sub { margin: 6px 0 0; color: var(--muted); }
