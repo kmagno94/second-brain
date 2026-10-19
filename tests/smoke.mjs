@@ -93,9 +93,10 @@ source: sample
 
 // Fake GitHub: repo info, the Daily/ listing, and raw note files.
 // opts.status forces every call to fail with that code; opts.listStatus only the listing.
-async function mockGitHub(p, { status = 200, push = true, listStatus = 200, files = { '2026-10-18.md': SAMPLE_NOTE } } = {}) {
+async function mockGitHub(p, { status = 200, push = true, listStatus = 200, putStatus = 201, taken = [], files = { '2026-10-18.md': SAMPLE_NOTE } } = {}) {
   p.calls = [];
   p.files = files;
+  p.puts = [];
   await p.route('https://api.github.com/**', route => {
     const req = route.request();
     const url = new URL(req.url());
@@ -107,6 +108,14 @@ async function mockGitHub(p, { status = 200, push = true, listStatus = 200, file
     if (url.pathname === base + '/contents/Daily') {
       if (listStatus !== 200) return json(listStatus, { message: 'no' });
       return json(200, Object.keys(p.files).map(name => ({ name, path: 'Daily/' + name, type: 'file' })).concat([{ name: '.gitkeep', path: 'Daily/.gitkeep', type: 'file' }]));
+    }
+    if (req.method() === 'PUT' && url.pathname.startsWith(base + '/contents/Inbox/')) {
+      const name = decodeURIComponent(url.pathname.split('/').pop());
+      if (taken.includes(name)) return json(422, { message: 'sha wasn\'t supplied' });
+      if (putStatus !== 201) return json(putStatus, { message: 'no' });
+      const body = JSON.parse(req.postData());
+      p.puts.push({ name, message: body.message, text: Buffer.from(body.content, 'base64').toString('utf8'), auth: req.headers()['authorization'], url: req.url() });
+      return json(201, { content: { name, path: 'Inbox/' + name } });
     }
     if (url.pathname.startsWith(base + '/contents/Daily/')) {
       const name = decodeURIComponent(url.pathname.split('/').pop());
@@ -288,6 +297,90 @@ await check('Locking clears the note from the screen', async () => {
   await p.click('#lock');
   await p.waitForSelector('#unlockForm');
   expect(!(await p.textContent('body')).includes('Second Brain Web App'), 'note still on screen after Lock');
+});
+
+/* Capture box (Step 10). */
+await check('Save to Inbox stays off until there is text', async () => {
+  const p = await page();
+  await mockGitHub(p);
+  await setUp(p);
+  expect(await p.isDisabled('#saveThought'), 'Save should start disabled');
+  await p.fill('#thought', '   \n ');
+  expect(await p.isDisabled('#saveThought'), 'Save should ignore blank space');
+  await p.fill('#thought', 'Idea');
+  expect(await p.isEnabled('#saveThought'), 'Save should turn on with text');
+});
+
+await check('Saving writes one new Inbox file with the exact text, then clears the box', async () => {
+  const p = await page();
+  await mockGitHub(p);
+  await setUp(p);
+  const thought = 'Call mom about Sunday dinner! 🍝\nAlso ask about the café';
+  await p.fill('#thought', thought);
+  await p.click('#saveThought');
+  await p.waitForSelector('#captureOk:not([hidden])');
+  expect(p.puts.length === 1, 'expected 1 save, got ' + p.puts.length);
+  const put = p.puts[0];
+  expect(/^\d{4}-\d{2}-\d{2}-\d{6}-call-mom-about-sunday-dinner\.md$/.test(put.name), 'file name: ' + put.name);
+  expect(/^---\ncreated: \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+-]\d{2}:\d{2}\nsource: web\n---\n\n/.test(put.text), 'frontmatter: ' + put.text);
+  expect(put.text.includes(thought), 'text changed on the way (emoji or accents lost?)');
+  expect(put.message === 'Capture: Call mom about Sunday dinner! 🍝', 'commit message: ' + put.message);
+  expect(put.auth === 'Bearer ' + FAKE_TOKEN && !put.url.includes(FAKE_TOKEN), 'token not in header only');
+  expect((await p.inputValue('#thought')) === '', 'box not cleared');
+  expect((await p.textContent('#captureOk')).includes(put.name), 'saved message missing the file name');
+  await p.fill('#thought', 'n');
+  expect(await p.isHidden('#captureOk'), 'saved message should clear when typing again');
+  expect(p.errors.length === 0, 'errors: ' + p.errors.join(' | '));
+});
+
+await check('A failed save keeps the text and says why', async () => {
+  const p = await page();
+  await mockGitHub(p, { putStatus: 500 });
+  await setUp(p);
+  await p.fill('#thought', 'Do not lose me');
+  await p.click('#saveThought');
+  await p.waitForSelector('#captureError:not([hidden])');
+  expect((await p.textContent('#captureError')).includes('Not saved'), 'wrong message: ' + await p.textContent('#captureError'));
+  expect((await p.inputValue('#thought')) === 'Do not lose me', 'text was lost');
+  expect(await p.isHidden('#captureOk'), 'claimed it saved');
+});
+
+await check('Offline save keeps the text', async () => {
+  const p = await page();
+  await mockGitHub(p);
+  await setUp(p);
+  await p.unroute('https://api.github.com/**');
+  await p.route('https://api.github.com/**', r => r.abort());
+  await p.fill('#thought', 'Subway thought');
+  await p.click('#saveThought');
+  await p.waitForSelector('#captureError:not([hidden])');
+  expect((await p.textContent('#captureError')).includes('could not reach GitHub'), 'wrong message');
+  expect((await p.inputValue('#thought')) === 'Subway thought', 'text was lost');
+});
+
+await check('A taken file name is never overwritten: it saves as -2', async () => {
+  const p = await page();
+  // Freeze the clock so the first name is known and already taken.
+  await p.addInitScript(() => {
+    const fixed = new Date(2026, 9, 19, 6, 15, 12).getTime();
+    const RealDate = Date;
+    globalThis.Date = class extends RealDate { constructor(...a) { super(...(a.length ? a : [fixed])); } static now() { return fixed; } };
+  });
+  await p.reload();
+  await mockGitHub(p, { taken: ['2026-10-19-061512-same-second.md'] });
+  await setUp(p);
+  await p.fill('#thought', 'same second');
+  await p.click('#saveThought');
+  await p.waitForSelector('#captureOk:not([hidden])');
+  expect(p.puts.length === 1 && p.puts[0].name === '2026-10-19-061512-same-second-2.md', 'saved as: ' + (p.puts[0] || {}).name);
+});
+
+await check('Capture box does not trigger iPhone zoom', async () => {
+  const p = await page();
+  await mockGitHub(p);
+  await setUp(p);
+  const size = await p.evaluate(() => parseFloat(getComputedStyle(document.getElementById('thought')).fontSize));
+  expect(size >= 16, 'capture box font is ' + size + 'px');
 });
 
 await browser.close();

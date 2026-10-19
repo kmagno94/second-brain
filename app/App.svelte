@@ -1,6 +1,6 @@
 <script>
   import { hasLockedToken, lockToken, unlockToken, forgetToken } from './lib/lock.js';
-  import { checkToken, latestDaily } from './lib/github.js';
+  import { checkToken, latestDaily, saveCapture } from './lib/github.js';
   import { renderMarkdown } from './lib/markdown.js';
 
   // setup: no token on this device yet. locked: token saved, needs the PIN.
@@ -35,6 +35,28 @@
   }
 
   function opened() { mode = 'unlocked'; loadNote(); }
+
+  // Capture box: each save is a new file in the vault's Inbox/.
+  let thought = $state('');
+  let saving = $state(false);
+  let savedName = $state('');
+  let captureError = $state('');
+  let canCapture = $derived(thought.trim().length > 0 && !saving);
+
+  async function capture(e) {
+    e.preventDefault();
+    if (!canCapture || !token) return;
+    saving = true; savedName = ''; captureError = '';
+    try {
+      const { name } = await saveCapture(token, thought);
+      thought = ''; savedName = name;
+    } catch (err) {
+      captureError = err.message; // the text stays in the box
+    }
+    saving = false;
+  }
+
+  function typing() { savedName = ''; captureError = ''; }
 
   let newToken = $state('');
   let newPin = $state('');
@@ -71,7 +93,10 @@
     busy = false;
   }
 
-  function clearNote() { note = null; noteError = ''; noteState = 'loading'; }
+  function clearNote() {
+    note = null; noteError = ''; noteState = 'loading';
+    thought = ''; savedName = ''; captureError = '';
+  }
 
   function lock() { token = null; error = ''; clearNote(); mode = 'locked'; }
 
@@ -107,6 +132,14 @@
       <button class="link" type="button" id="forget" onclick={forget}>Forgot PIN? Remove the token from this device</button>
     </form>
   {:else}
+    <form class="card" id="capture" onsubmit={capture}>
+      <label class="label first" for="thought">💭 Capture a thought</label>
+      <textarea id="thought" rows="3" placeholder="What's on your mind?" bind:value={thought} oninput={typing}></textarea>
+      <button class="primary" id="saveThought" type="submit" disabled={!canCapture}>{saving ? 'Saving...' : 'Save to Inbox'}</button>
+      <p class="ok" id="captureOk" role="status" hidden={!savedName}>✅ Saved to Inbox as {savedName}</p>
+      <p class="error" id="captureError" role="alert" hidden={!captureError}>{captureError}</p>
+    </form>
+
     <section class="card" id="unlocked">
       <div class="note-head">
         <span class="tag" id="noteLabel">📅 {noteState === 'ready' ? noteLabel : 'Daily note'}</span>
