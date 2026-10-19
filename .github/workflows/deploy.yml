@@ -1,4 +1,4 @@
-# Builds 2nd Brain, runs the smoke tests, and publishes to GitHub Pages
+# Builds Second Brain, runs the smoke tests, and publishes to GitHub Pages
 # on every push to main. A failing test stops the deploy, so the live site
 # only ever gets a build that passed.
 # One-time setup: repo Settings > Pages > Build and deployment > Source: "GitHub Actions".

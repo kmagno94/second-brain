@@ -1,4 +1,4 @@
-# 2nd Brain
+# Second Brain
 
 A private web page for Kevin's second brain: today's synced Notion notes, and a box to capture a thought. Live at [kmagno94.github.io/second-brain](https://kmagno94.github.io/second-brain/).
 

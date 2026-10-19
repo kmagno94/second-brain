@@ -1,4 +1,4 @@
-// 2nd Brain smoke tests. Drives the built page at phone size and fails
+// Second Brain smoke tests. Drives the built page at phone size and fails
 // (exit 1) on any broken check. Run: npm install && npm test (from the repo root).
 import { chromium } from 'playwright';
 import { spawn } from 'node:child_process';
@@ -43,7 +43,7 @@ async function page(opts = {}) {
 await check('Page loads with the app title and no errors', async () => {
   const p = await page();
   await p.waitForSelector('#title');
-  expect((await p.textContent('#title')).includes('2nd Brain'), 'title missing');
+  expect((await p.textContent('#title')).includes('Second Brain'), 'title missing');
   expect(p.errors.length === 0, 'errors: ' + p.errors.join(' | '));
 });
 
