@@ -72,15 +72,56 @@ await check('Hidden elements stay hidden (DEV-1)', async () => {
 /* PIN lock (Step 7). GitHub's API is mocked so tests never touch the real vault. */
 const FAKE_TOKEN = 'github_pat_TEST_' + 'x'.repeat(60);
 
-async function mockGitHub(p, { status = 200, push = true } = {}) {
+const SAMPLE_NOTE = `---
+date: 2026-10-18
+source: sample
+---
+
+# Sunday, October 18, 2026
+
+> Sample note, written by hand.
+
+## Projects
+
+### Second Brain Web App
+[Open in Notion](https://app.notion.com/p/3fd098dedfdb81cd87b1cc6e28faee04)
+
+- Project started
+  - Nested detail
+- Repos created
+`;
+
+// Fake GitHub: repo info, the Daily/ listing, and raw note files.
+// opts.status forces every call to fail with that code; opts.listStatus only the listing.
+async function mockGitHub(p, { status = 200, push = true, listStatus = 200, files = { '2026-10-18.md': SAMPLE_NOTE } } = {}) {
   p.calls = [];
+  p.files = files;
   await p.route('https://api.github.com/**', route => {
     const req = route.request();
-    p.calls.push({ url: req.url(), auth: req.headers()['authorization'] });
-    if (status !== 200) return route.fulfill({ status, contentType: 'application/json', body: '{"message":"no"}' });
-    return route.fulfill({ status: 200, contentType: 'application/json',
-      body: JSON.stringify({ full_name: 'kmagno94/second-brain-vault', private: true, permissions: { pull: true, push } }) });
+    const url = new URL(req.url());
+    p.calls.push({ url: req.url(), auth: req.headers()['authorization'], accept: req.headers()['accept'] });
+    const json = (code, body) => route.fulfill({ status: code, contentType: 'application/json', body: JSON.stringify(body) });
+    if (status !== 200) return json(status, { message: 'no' });
+    const base = '/repos/kmagno94/second-brain-vault';
+    if (url.pathname === base) return json(200, { full_name: 'kmagno94/second-brain-vault', private: true, permissions: { pull: true, push } });
+    if (url.pathname === base + '/contents/Daily') {
+      if (listStatus !== 200) return json(listStatus, { message: 'no' });
+      return json(200, Object.keys(p.files).map(name => ({ name, path: 'Daily/' + name, type: 'file' })).concat([{ name: '.gitkeep', path: 'Daily/.gitkeep', type: 'file' }]));
+    }
+    if (url.pathname.startsWith(base + '/contents/Daily/')) {
+      const name = decodeURIComponent(url.pathname.split('/').pop());
+      if (!(name in p.files)) return json(404, { message: 'Not Found' });
+      return route.fulfill({ status: 200, contentType: 'text/plain', body: p.files[name] });
+    }
+    return json(404, { message: 'Not Found' });
   });
+}
+
+async function setUp(p, pin = '1234') {
+  await p.fill('#token', FAKE_TOKEN);
+  await p.fill('#newPin', pin);
+  await p.click('#save');
+  await p.waitForSelector('#unlocked');
 }
 
 await check('New device shows setup, Lock and save stays off until token and PIN', async () => {
@@ -122,8 +163,8 @@ await check('Good token is saved locked: header only, never in a URL or in plain
   await p.fill('#newPin', '482915');
   await p.click('#save');
   await p.waitForSelector('#unlocked');
-  expect(p.calls.length === 1 && p.calls[0].auth === 'Bearer ' + FAKE_TOKEN, 'token not sent in the Authorization header');
-  expect(!p.calls[0].url.includes(FAKE_TOKEN), 'token leaked into a URL');
+  expect(p.calls.length >= 1 && p.calls.every(c => c.auth === 'Bearer ' + FAKE_TOKEN), 'token not sent in the Authorization header');
+  expect(p.calls.every(c => !c.url.includes(FAKE_TOKEN)), 'token leaked into a URL');
   const stored = await p.evaluate(() => Object.values({ ...localStorage }).join(''));
   expect(stored.length > 0 && !stored.includes('github_pat'), 'token stored in plain text');
   expect(p.errors.length === 0, 'errors: ' + p.errors.join(' | '));
@@ -168,6 +209,85 @@ await check('PIN and token boxes do not trigger iPhone zoom', async () => {
   const p = await page();
   const sizes = await p.$$eval('input', els => els.map(e => parseFloat(getComputedStyle(e).fontSize)));
   expect(sizes.length >= 2 && sizes.every(s => s >= 16), 'input font sizes: ' + sizes.join(', '));
+});
+
+/* Daily note (Step 9). */
+await check('Unlocked shows the newest daily note, rendered', async () => {
+  const p = await page();
+  await mockGitHub(p, { files: { '2026-10-16.md': '# Old day\n', '2026-10-18.md': SAMPLE_NOTE, '2026-10-17.md': '# Middle day\n' } });
+  await setUp(p);
+  await p.waitForSelector('#noteBody');
+  expect(await p.getAttribute('#noteBody', 'data-date') === '2026-10-18', 'did not pick the newest note');
+  expect((await p.textContent('#noteBody h2')).includes('Sunday, October 18, 2026'), 'title heading missing');
+  expect(!(await p.textContent('#noteBody')).includes('source: sample'), 'frontmatter showing');
+  expect(await p.$$eval('#noteBody ul ul li', els => els.length) === 1, 'nested bullet not nested');
+  const link = await p.$eval('#noteBody a', a => ({ href: a.href, target: a.target }));
+  expect(link.href.startsWith('https://app.notion.com/') && link.target === '_blank', 'Notion link wrong');
+  const raw = p.calls.find(c => c.url.endsWith('/Daily/2026-10-18.md'));
+  expect(raw && raw.accept === 'application/vnd.github.raw+json', 'note not fetched as raw text');
+  expect(p.errors.length === 0, 'errors: ' + p.errors.join(' | '));
+});
+
+await check('Label says Today, Yesterday, or Latest note', async () => {
+  const p = await page();
+  const [today, yesterday] = await p.evaluate(() => [0, -1].map(o => {
+    const d = new Date(); d.setDate(d.getDate() + o);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  }));
+  await mockGitHub(p, { files: { [yesterday + '.md']: '# Y\n' } });
+  await setUp(p);
+  await p.waitForSelector('#noteBody');
+  expect((await p.textContent('#noteLabel')).includes('Yesterday'), 'yesterday label: ' + await p.textContent('#noteLabel'));
+  p.files[today + '.md'] = '# T\n';
+  await p.click('#refresh');
+  await p.waitForSelector(`#noteBody[data-date="${today}"]`);
+  expect((await p.textContent('#noteLabel')).includes('Today'), 'today label: ' + await p.textContent('#noteLabel'));
+  p.files = { '2020-01-01.md': '# Long ago\n' };
+  await p.click('#refresh');
+  await p.waitForSelector('#noteBody[data-date="2020-01-01"]');
+  expect((await p.textContent('#noteLabel')).includes('Latest note'), 'latest label: ' + await p.textContent('#noteLabel'));
+});
+
+await check('HTML in a note shows as text and never runs', async () => {
+  const p = await page();
+  const evil = '# Hi <img src=x onerror="window.hacked=1">\n\n- <script>window.hacked=1</script>\n- [click](javascript:window.hacked=1)\n';
+  await mockGitHub(p, { files: { '2026-10-18.md': evil } });
+  await setUp(p);
+  await p.waitForSelector('#noteBody');
+  expect(await p.$$eval('#noteBody img, #noteBody script', els => els.length) === 0, 'raw HTML became elements');
+  expect(await p.$$eval('#noteBody a', els => els.length) === 0, 'javascript: link was made clickable');
+  expect((await p.textContent('#noteBody')).includes('<img src=x'), 'HTML text was dropped instead of shown');
+  expect(!(await p.evaluate(() => window.hacked)), 'script ran');
+});
+
+await check('No daily notes yet shows a friendly empty message', async () => {
+  const p = await page();
+  await mockGitHub(p, { files: {} });
+  await setUp(p);
+  await p.waitForSelector('#noteEmpty');
+});
+
+await check('Expired token shows how to fix it, and Refresh retries', async () => {
+  const p = await page();
+  await mockGitHub(p, { listStatus: 401 });
+  await setUp(p);
+  await p.waitForSelector('#noteError');
+  expect((await p.textContent('#noteError')).includes('may have expired'), 'wrong message: ' + await p.textContent('#noteError'));
+  expect(await p.isHidden('#error'), 'note error leaked into the setup error line');
+  await p.unroute('https://api.github.com/**');
+  await mockGitHub(p);
+  await p.click('#refresh');
+  await p.waitForSelector('#noteBody');
+});
+
+await check('Locking clears the note from the screen', async () => {
+  const p = await page();
+  await mockGitHub(p);
+  await setUp(p);
+  await p.waitForSelector('#noteBody');
+  await p.click('#lock');
+  await p.waitForSelector('#unlockForm');
+  expect(!(await p.textContent('body')).includes('Second Brain Web App'), 'note still on screen after Lock');
 });
 
 await browser.close();

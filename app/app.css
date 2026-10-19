@@ -69,3 +69,27 @@ button.link {
   margin: 12px 0 0; padding: 10px 12px; border-radius: 10px;
   background: var(--error-bg); color: var(--ink); font-size: 15px;
 }
+
+/* Daily note */
+.note-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.tag { font-size: 13px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: var(--accent); }
+button.small {
+  min-height: 36px; padding: 0 12px; border: 1px solid var(--line); border-radius: 999px;
+  background: transparent; color: var(--ink); font-size: 15px; font-weight: 600;
+}
+button.small:disabled { opacity: 0.5; cursor: default; }
+.md { margin-top: 6px; overflow-wrap: anywhere; }
+.md h2 { margin: 6px 0 8px; font-size: 24px; line-height: 1.2; }
+.md h3 { margin: 22px 0 6px; font-size: 19px; line-height: 1.25; }
+.md h4, .md h5, .md h6 { margin: 16px 0 4px; font-size: 17px; }
+.md p { margin: 8px 0; }
+.md ul { margin: 6px 0; padding-left: 22px; }
+.md li { margin: 3px 0; }
+.md a { color: var(--accent); font-weight: 600; }
+.md blockquote {
+  margin: 10px 0; padding: 2px 12px; border-left: 3px solid var(--accent);
+  color: var(--muted); font-size: 15px;
+}
+.md blockquote p { margin: 6px 0; }
+.md hr { border: 0; border-top: 1px solid var(--line); margin: 16px 0; }
+.md code { font-family: ui-monospace, Menlo, monospace; font-size: 0.9em; background: var(--bg); padding: 1px 4px; border-radius: 4px; }

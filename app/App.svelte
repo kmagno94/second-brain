@@ -1,11 +1,40 @@
 <script>
   import { hasLockedToken, lockToken, unlockToken, forgetToken } from './lib/lock.js';
-  import { checkToken } from './lib/github.js';
+  import { checkToken, latestDaily } from './lib/github.js';
+  import { renderMarkdown } from './lib/markdown.js';
 
   // setup: no token on this device yet. locked: token saved, needs the PIN.
-  // unlocked: token in memory, ready for the next steps (today's note, capture).
+  // unlocked: token in memory, showing the newest daily note.
   let mode = $state(hasLockedToken() ? 'locked' : 'setup');
   let token = null; // unlocked token, memory only
+
+  // Daily note: loading, ready, empty (no notes yet), or error.
+  let noteState = $state('loading');
+  let note = $state(null); // { date, html }
+  let noteError = $state('');
+
+  function localDay(offset = 0) {
+    const d = new Date();
+    d.setDate(d.getDate() + offset);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  }
+  let noteLabel = $derived(!note ? '' : note.date === localDay() ? 'Today'
+    : note.date === localDay(-1) ? 'Yesterday' : 'Latest note');
+
+  async function loadNote() {
+    if (!token) return;
+    noteState = 'loading'; noteError = '';
+    try {
+      const found = await latestDaily(token);
+      if (!found) { note = null; noteState = 'empty'; return; }
+      note = { date: found.date, html: renderMarkdown(found.text) };
+      noteState = 'ready';
+    } catch (err) {
+      noteError = err.message; noteState = 'error';
+    }
+  }
+
+  function opened() { mode = 'unlocked'; loadNote(); }
 
   let newToken = $state('');
   let newPin = $state('');
@@ -26,7 +55,7 @@
     if (!check.ok) { error = check.reason; busy = false; return; }
     try {
       await lockToken(t, newPin);
-      token = t; newToken = ''; newPin = ''; mode = 'unlocked';
+      token = t; newToken = ''; newPin = ''; opened();
     } catch (err) { error = err.message; }
     busy = false;
   }
@@ -37,16 +66,18 @@
     busy = true; error = '';
     const t = await unlockToken(pin);
     pin = '';
-    if (t) { token = t; mode = 'unlocked'; }
+    if (t) { token = t; opened(); }
     else error = 'Wrong PIN. Try again.';
     busy = false;
   }
 
-  function lock() { token = null; error = ''; mode = 'locked'; }
+  function clearNote() { note = null; noteError = ''; noteState = 'loading'; }
+
+  function lock() { token = null; error = ''; clearNote(); mode = 'locked'; }
 
   function forget() {
     if (!confirm('Remove the saved token from this device? You will paste it again next time.')) return;
-    forgetToken(); token = null; error = ''; mode = 'setup';
+    forgetToken(); token = null; error = ''; clearNote(); mode = 'setup';
   }
 </script>
 
@@ -77,13 +108,29 @@
     </form>
   {:else}
     <section class="card" id="unlocked">
-      <h2>✅ Unlocked</h2>
-      <p class="note">Connected to second-brain-vault. Today's note and the capture box come next.</p>
-      <div class="row">
-        <button class="ghost" id="lock" type="button" onclick={lock}>Lock</button>
-        <button class="ghost" type="button" id="forgetUnlocked" onclick={forget}>Remove token</button>
+      <div class="note-head">
+        <span class="tag" id="noteLabel">📅 {noteState === 'ready' ? noteLabel : 'Daily note'}</span>
+        <button class="small" id="refresh" type="button" onclick={loadNote} disabled={noteState === 'loading'}>
+          {noteState === 'loading' ? 'Loading...' : 'Refresh'}
+        </button>
       </div>
+
+      {#if noteState === 'loading'}
+        <p class="note" id="noteLoading">Getting your latest note...</p>
+      {:else if noteState === 'empty'}
+        <p class="note" id="noteEmpty">No daily notes yet. They show up here after the first Notion sync.</p>
+      {:else if noteState === 'error'}
+        <p class="error" id="noteError" role="alert">{noteError}</p>
+      {:else}
+        <!-- Safe: renderMarkdown escapes all note text before adding its own tags. -->
+        <article class="md" id="noteBody" data-date={note.date}>{@html note.html}</article>
+      {/if}
     </section>
+
+    <div class="row">
+      <button class="ghost" id="lock" type="button" onclick={lock}>Lock</button>
+      <button class="ghost" type="button" id="forgetUnlocked" onclick={forget}>Remove token</button>
+    </div>
   {/if}
 
   <p class="error" id="error" role="alert" hidden={!error}>{error}</p>
